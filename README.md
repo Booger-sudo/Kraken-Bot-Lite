@@ -74,7 +74,7 @@ I offer a **pre-configured version** for users who want to skip manual setup and
 This is for users who want to get started fast with proven default settings.
 
 **To purchase:**  
-- Email: [your@email.com]  
+- Email: krakenbotlive@proton.me  
 - Or [Ko-fi / BuyMeACoffee / Gumroad link]
 
 ---
