@@ -14,9 +14,10 @@ If you'd rather skip the setup and get started right away, a **pre-configured ed
 
 - **Built-In Strategies**: VWAP, EMA, MACD, RSI, Fibonacci, ATR
 - **Composite Signal Logic**: Confirms trades with multiple strategies
-- **Market State Awareness**: Detects trend, range, or volatility conditions
-- **Smart Exits**: Profit targets, trailing stops, time/risk exits
-- **Risk Controls**: ATR-based position sizing and liquidity checks
+- **Adaptive Market State Detection**: Identifies trending, ranging, or volatile conditions
+- **Smart Exits**: Profit targets, trailing stops, time/risk exits, and Fibonacci resistance
+- **Risk Management**: ATR-based position sizing and liquidity checks
+- **Batch Order Execution**: Supports batch orders, amendments, and cancellations
 - **Logging**: Monitors trades, signals, and market conditions
 
 ---
