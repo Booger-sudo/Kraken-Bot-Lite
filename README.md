@@ -69,16 +69,11 @@ I offer a **pre-configured version** for users who want to skip manual setup and
 - No setup, no tweaking, just launch
 
 **Price:** $50  
-**Delivery:** Private GitHub repo invite within 24 hours
-
-**No consultation or custom tuning is included.**  
-This is for users who want to get started fast with proven default settings.
+**Delivery:** Private GitHub repo invite within 24 
 
 **To purchase:**  
 - Email: kraketrade@proton.me  
-- Or [Ko-fi / BuyMeACoffee / Gumroad link]
-
----
+- Or Ko-fi.com/kraketrade
 
 ## License
 
