@@ -98,19 +98,15 @@ class TradingStrategy:
         raise NotImplementedError
 
 class EMACrossoverStrategy(TradingStrategy):
-    def __init__(self, market_data: MarketData):
+    def __init__(self, market_data: MarketData, fast_period: int = None, slow_period: int = None, higher_fast_period: int = None, higher_slow_period: int = None):
         super().__init__(market_data)
-        # self.fast_period = <CONFIGURE>
-        # self.slow_period = <CONFIGURE>
-        # self.higher_fast_period = <CONFIGURE>  # 4-hour fast EMA
-        # self.higher_slow_period = <CONFIGURE>  # 4-hour slow EMA
+        self.fast_period = fast_period or "<configure>"
+        self.slow_period = slow_period or "<configure>"
+        self.higher_fast_period = higher_fast_period or "<configure>"
+        self.higher_slow_period = higher_slow_period or "<configure>"
 
     def calculate_higher_ema_crossover(self, pair: str) -> bool:
-        """
-        Calculate 20×50 EMA crossover for the 4-hour timeframe.
-        Returns True if there's a crossover, False otherwise.
-        """
-        ohlc = self.market_data.get_ohlc(pair, interval=240)  # 240 minutes = 4 hours
+        ohlc = self.market_data.get_ohlc(pair, interval=240)  # 4-hour timeframe
         if len(ohlc) < max(self.higher_fast_period, self.higher_slow_period):
             logger.warning(f"Not enough data for 4-hour EMA analysis for pair: {pair}")
             return False
@@ -121,11 +117,10 @@ class EMACrossoverStrategy(TradingStrategy):
         last_row = ohlc.iloc[-1]
         prev_row = ohlc.iloc[-2]
 
-        # Check for 20×50 crossover conditions
         if prev_row['fast_ema'] <= prev_row['slow_ema'] and last_row['fast_ema'] > last_row['slow_ema']:
-            return True  # Bullish crossover
+            return True
         elif prev_row['fast_ema'] >= prev_row['slow_ema'] and last_row['fast_ema'] < last_row['slow_ema']:
-            return True  # Bearish crossover
+            return True
 
         return False
 
@@ -141,23 +136,104 @@ class EMACrossoverStrategy(TradingStrategy):
         last_row = ohlc.iloc[-1]
         prev_row = ohlc.iloc[-2]
 
-        # Check 9×21 crossover (main strategy condition)
-        if (prev_row['fast_ema'] <= prev_row['slow_ema'] and last_row['fast_ema'] > last_row['slow_ema']):
-            # Confirm with 20×50 EMA on 4-hour timeframe
+        if prev_row['fast_ema'] <= prev_row['slow_ema'] and last_row['fast_ema'] > last_row['slow_ema']:
             if self.calculate_higher_ema_crossover(pair):
                 return {'signal': 'buy', 'price': float(last_row['close']), 'confidence': 0.8}
-        elif (prev_row['fast_ema'] >= prev_row['slow_ema'] and last_row['fast_ema'] < last_row['slow_ema']):
-            # Confirm with 20×50 EMA on 4-hour timeframe
+        elif prev_row['fast_ema'] >= prev_row['slow_ema'] and last_row['fast_ema'] < last_row['slow_ema']:
             if self.calculate_higher_ema_crossover(pair):
                 return {'signal': 'sell', 'price': float(last_row['close']), 'confidence': 0.8}
 
         return {'signal': 'hold', 'confidence': 0}
 
 class MACDStrategy(TradingStrategy):
+    def __init__(self, market_data: MarketData, fast_period: int = None, slow_period: int = None, signal_period: int = None):
+        super().__init__(market_data)
+        self.fast_period = fast_period or "<configure>"
+        self.slow_period = slow_period or "<configure>"
+        self.signal_period = signal_period or "<configure>"
+
+    def analyze(self, pair: str) -> dict:
+        ohlc = self.market_data.get_ohlc(pair)
+        fast_ema = ohlc['close'].ewm(span=self.fast_period, adjust=False).mean()
+        slow_ema = ohlc['close'].ewm(span=self.slow_period, adjust=False).mean()
+        macd_line = fast_ema - slow_ema
+        signal_line = macd_line.ewm(span=self.signal_period, adjust=False).mean()
+
+        last_macd = macd_line.iloc[-1]
+        last_signal = signal_line.iloc[-1]
+        prev_macd = macd_line.iloc[-2]
+        prev_signal = signal_line.iloc[-2]
+
+        if prev_macd <= prev_signal and last_macd > last_signal:
+            return {'signal': 'buy', 'price': float(ohlc['close'].iloc[-1]), 'confidence': 0.7}
+        elif prev_macd >= prev_signal and last_macd < last_signal:
+            return {'signal': 'sell', 'price': float(ohlc['close'].iloc[-1]), 'confidence': 0.7}
+        return {'signal': 'hold', 'confidence': 0}
+
+class RSIStrategy(TradingStrategy):
+    def __init__(self, market_data: MarketData, period: int = None, overbought: int = None, oversold: int = None):
+        super().__init__(market_data)
+        self.period = period or "<configure>"
+        self.overbought = overbought or "<configure>"
+        self.oversold = oversold or "<configure>"
+
+    def analyze(self, pair: str) -> dict:
+        ohlc = self.market_data.get_ohlc(pair)
+        delta = ohlc['close'].diff()
+        gain = delta.where(delta > 0, 0).rolling(window=self.period).mean()
+        loss = -delta.where(delta < 0, 0).rolling(window=self.period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+
+        last_rsi = rsi.iloc[-1]
+        prev_rsi = rsi.iloc[-2]
+
+        if prev_rsi <= self.oversold and last_rsi > self.oversold:
+            return {'signal': 'buy', 'price': float(ohlc['close'].iloc[-1]), 'confidence': 0.6}
+        elif prev_rsi >= self.overbought and last_rsi < self.overbought:
+            return {'signal': 'sell', 'price': float(ohlc['close'].iloc[-1]), 'confidence': 0.6}
+        return {'signal': 'hold', 'confidence': 0}
+
+class FibonacciStrategy(TradingStrategy):
+    def __init__(self, market_data: MarketData, levels: List[float] = None, lookback: int = None):
+        super().__init__(market_data)
+        self.levels = levels or "<configure>"
+        self.lookback = lookback or "<configure>"
+
+    def analyze(self, pair: str) -> dict:
+        ohlc = self.market_data.get_ohlc(pair, interval=60)
+        highs = ohlc['high'].rolling(window=5, center=True).max()
+        lows = ohlc['low'].rolling(window=5, center=True).min()
+        swing_high = highs.max()
+        swing_low = lows.min()
+        current_price = float(ohlc['close'].iloc[-1])
+
+        fib_levels = {level: swing_high - (level * (swing_high - swing_low)) for level in self.levels}
+
+        nearest_level = None
+        min_dist = float('inf')
+        for level, price in fib_levels.items():
+            dist = abs(current_price - price)
+            if dist < min_dist:
+                min_dist = dist
+                nearest_level = level
+
+        if current_price >= swing_high * 0.99:
+            return {'signal': 'sell', 'price': current_price, 'confidence': 0.6}
+        elif current_price <= swing_low * 1.01:
+            return {'signal': 'buy', 'price': current_price, 'confidence': 0.6}
+        elif nearest_level and min_dist < 0.008 * current_price:
+            if nearest_level >= 0.618 and ohlc['close'].iloc[-1] > ohlc['close'].iloc[-2]:
+                return {'signal': 'buy', 'price': current_price, 'confidence': 0.6}
+            elif nearest_level <= 0.382 and ohlc['close'].iloc[-1] < ohlc['close'].iloc[-2]:
+                return {'signal': 'sell', 'price': current_price, 'confidence': 0.6}
+        return {'signal': 'hold', 'confidence': 0}
+
+class MACDStrategy(TradingStrategy):
     def __init__(self, market_data: MarketData):
         super().__init__(market_data)
-        # self.fast_period = <CONFIGURE>
-        # self.slow_period = <CONFIGURE>
+        self.fast_period = 12
+        self.slow_period = 26
         self.signal_period = 9
 
     def analyze(self, pair: str) -> dict:
@@ -181,9 +257,9 @@ class MACDStrategy(TradingStrategy):
 class RSIStrategy(TradingStrategy):
     def __init__(self, market_data: MarketData):
         super().__init__(market_data)
-        # self.period = <CONFIGURE>
-        # self.overbought = <CONFIGURE>
-        # self.oversold = <CONFIGURE>
+        self.period = 14
+        self.overbought = 65
+        self.oversold = 35
 
     def analyze(self, pair: str) -> dict:
         ohlc = self.market_data.get_ohlc(pair)
@@ -205,8 +281,8 @@ class RSIStrategy(TradingStrategy):
 class FibonacciStrategy(TradingStrategy):
     def __init__(self, market_data: MarketData):
         super().__init__(market_data)
-        # self.levels = <CONFIGURE>
-        # self.lookback = <CONFIGURE>
+        self.levels = [0.236, 0.382, 0.5, 0.618, 0.786]
+        self.lookback = 100
 
     def analyze(self, pair: str) -> dict:
         ohlc = self.market_data.get_ohlc(pair, interval=60)
@@ -240,10 +316,10 @@ class FibonacciStrategy(TradingStrategy):
 class DailyVWAPStrategy(TradingStrategy):
     def __init__(self, market_data: MarketData):
         super().__init__(market_data)
-        # self.std_dev_multiplier = <CONFIGURE>
-        # self.confirmation_periods = <CONFIGURE>
-        # self.min_volume_factor = <CONFIGURE>
-        # self.lower_timeframe_interval = <CONFIGURE>  # 4-hour confirmation timeframe
+        self.std_dev_multiplier = 2.0
+        self.confirmation_periods = 3
+        self.min_volume_factor = 1.5
+        self.lower_timeframe_interval = 240  # 4-hour confirmation timeframe
 
     def calculate_vwap(self, ohlc_data):
         """Calculate VWAP and standard deviation bands"""
@@ -251,21 +327,21 @@ class DailyVWAPStrategy(TradingStrategy):
         cumulative_volume = ohlc_data['volume'].cumsum()
         cumulative_pv = (typical_price * ohlc_data['volume']).cumsum()
         vwap = cumulative_pv / cumulative_volume
-
+        
         squared_diff = ((typical_price - vwap) ** 2 * ohlc_data['volume']).cumsum()
         std_dev = (squared_diff / cumulative_volume) ** 0.5
         upper_band = vwap + std_dev * self.std_dev_multiplier
         lower_band = vwap - std_dev * self.std_dev_multiplier
-
+        
         return vwap, upper_band, lower_band
 
     def analyze_vwap_trend(self, ohlc_data):
         """Determine the VWAP trend direction"""
         vwap, _, _ = self.calculate_vwap(ohlc_data)
-
+        
         if len(vwap) < self.confirmation_periods:
             return 'neutral'
-
+        
         recent_vwap = vwap.iloc[-self.confirmation_periods:]  # Use .iloc for slicing
         if all(recent_vwap.iloc[i] > recent_vwap.iloc[i-1] for i in range(1, len(recent_vwap))):
             return 'up'
@@ -291,17 +367,17 @@ class DailyVWAPStrategy(TradingStrategy):
         current_price = daily_ohlc['close'].iloc[-1]
         current_volume = daily_ohlc['volume'].iloc[-1]
         avg_volume = daily_ohlc['volume'].rolling(20).mean().iloc[-1]
-
+        
         # Get trends
         daily_trend = self.analyze_vwap_trend(daily_ohlc)
         four_hour_trend = self.analyze_lower_timeframe_vwap(pair)
-
+        
         # Bullish entry conditions
         if (current_price > daily_vwap.iloc[-1] and 
             daily_trend == 'up' and
             four_hour_trend in ['up', 'neutral'] and  # Allow neutral on 4H
             current_volume > avg_volume * self.min_volume_factor):
-
+            
             if any(daily_ohlc['low'].iloc[-5:-1] <= daily_vwap.iloc[-5:-1]):
                 return {
                     'signal': 'buy',
@@ -314,13 +390,13 @@ class DailyVWAPStrategy(TradingStrategy):
                         'lower': float(daily_lower.iloc[-1])
                     }
                 }
-
+        
         # Bearish entry conditions
         elif (current_price < daily_vwap.iloc[-1] and 
               daily_trend == 'down' and
               four_hour_trend in ['down', 'neutral'] and
               current_volume > avg_volume * self.min_volume_factor):
-
+            
             if any(daily_ohlc['high'].iloc[-5:-1] >= daily_vwap.iloc[-5:-1]):
                 return {
                     'signal': 'sell',
@@ -340,12 +416,12 @@ class CompositeStrategy(TradingStrategy):
     def __init__(self, market_data: MarketData):
         super().__init__(market_data)
         self.strategies = {
-            'vwap': DailyVWAPStrategy(market_data),  # Replace EMA with VWAP
-            'macd': MACDStrategy(market_data),
-            'rsi': RSIStrategy(market_data),
-            'fib': FibonacciStrategy(market_data)
+            'vwap': DailyVWAPStrategy(market_data), # Daily VWAP strategy
+            'macd': MACDStrategy(market_data),    # MACD strategy
+            'rsi': RSIStrategy(market_data),    # RSI strategy
+            'fib': FibonacciStrategy(market_data) ,  # Fibonacci strategy
         }
-        # self.required_confirmations = <CONFIGURE>
+        self.required_confirmations = 2
 
     def analyze(self, pair: str) -> dict:
         logger.info(f"Analyzing trading signals for pair: {pair}")
@@ -502,10 +578,14 @@ class SmartExitStrategy:
 
     def __init__(self, market_data: MarketData):
         self.market_data = market_data
-        # self.trailing_stop_activation_pct = <CONFIGURE>  # Activate trailing stop after 0.5% profit
-        # self.trailing_stop_distance_pct = <CONFIGURE>    # 0.3% trailing distance
-        # self.profit_targets = <CONFIGURE>    # Take profit at 0.5%, 1%, and 2%
-        # self.emergency_exit_signals = <CONFIGURE>
+        self.trailing_stop_activation_pct = 0.5  # Activate trailing stop after 0.5% profit
+        self.trailing_stop_distance_pct = 0.3    # 0.3% trailing distance
+        self.profit_targets = [0.5, 1.0, 2.0]    # Take profit at 0.5%, 1%, and 2%
+        self.emergency_exit_signals = {
+            'rsi_limit': 75,      # Exit if RSI reaches this level
+            'volume_spike': 2.5,  # 2.5x average volume
+            'time_decay': 6       # Max 6 hours per trade
+        }
 
     def should_exit(self, pair: str, entry_price: float, entry_time: datetime) -> Tuple[bool, Optional[str]]:
         """
@@ -567,6 +647,270 @@ class TradingBot:
         self.active_trades = {}  # {pair: (entry_price, entry_time, position_size)}
         self.trading_pairs = trading_pairs  # List of trading pairs to monitor and trade
 
+    def execute_order(self, pair: str, order_type: str, volume: float, price: Optional[float] = None):
+        """
+        Execute an order on Kraken.
+        :param pair: Trading pair (e.g., BTC/USD)
+        :param order_type: 'buy' or 'sell'
+        :param volume: Order volume
+        :param price: Optional limit price (for limit orders)
+        """
+        nonce = str(int(time.time() * 1000))
+        endpoint = "/0/private/AddOrder"
+        data = {
+            "nonce": nonce,
+            "ordertype": "limit" if price else "market",
+            "type": order_type,
+            "pair": pair,
+            "volume": str(volume),
+        }
+        if price:
+            data["price"] = str(price)
+
+        try:
+            signature = self.auth.generate_signature(endpoint, data)
+            headers = {
+                "API-Key": self.auth.api_key,
+                "API-Sign": signature,
+            }
+            response = requests.post(API_URL + endpoint, data=data, headers=headers)
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("error"):
+                logger.error(f"Order execution failed: {result['error']}")
+                return None
+
+            logger.info(f"Order executed successfully: {result['result']}")
+            return result["result"]
+        except Exception as e:
+            logger.error(f"Error executing order: {str(e)}")
+            return None
+
+    def execute_batch_order(self, orders: List[dict], validate: bool = False, deadline: Optional[str] = None):
+        """
+        Execute a batch of orders on Kraken.
+        :param orders: List of order dictionaries.
+        :param validate: If True, validate the orders without executing them.
+        :param deadline: Optional deadline for the batch order.
+        """
+        nonce = str(int(time.time() * 1000))
+        endpoint = "/0/private/AddOrderBatch"
+        data = {
+            "nonce": nonce,
+            "orders": orders,
+            "validate": validate,
+        }
+        if deadline:
+            data["deadline"] = deadline
+
+        try:
+            signature = self.auth.generate_signature(endpoint, data)
+            headers = {
+                "API-Key": self.auth.api_key,
+                "API-Sign": signature,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            response = requests.post(API_URL + endpoint, headers=headers, data=json.dumps(data))
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("error"):
+                logger.error(f"Batch order execution failed: {result['error']}")
+                return None
+
+            logger.info(f"Batch order executed successfully: {result['result']}")
+            return result["result"]
+        except Exception as e:
+            logger.error(f"Error executing batch order: {str(e)}")
+            return None
+
+    def amend_order(self, cl_ord_id: str, order_qty: Optional[float] = None, price: Optional[float] = None):
+        """
+        Amend an existing order on Kraken.
+        :param cl_ord_id: Client order ID of the order to amend.
+        :param order_qty: New order quantity (optional).
+        :param price: New order price (optional).
+        """
+        nonce = str(int(time.time() * 1000))
+        endpoint = "/0/private/AmendOrder"
+        data = {
+            "nonce": nonce,
+            "cl_ord_id": cl_ord_id,
+        }
+        if order_qty:
+            data["order_qty"] = str(order_qty)
+        if price:
+            data["price"] = str(price)
+
+        try:
+            signature = self.auth.generate_signature(endpoint, data)
+            headers = {
+                "API-Key": self.auth.api_key,
+                "API-Sign": signature,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            response = requests.post(API_URL + endpoint, headers=headers, data=json.dumps(data))
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("error"):
+                logger.error(f"Order amendment failed: {result['error']}")
+                return None
+
+            logger.info(f"Order amended successfully: {result['result']}")
+            return result["result"]
+        except Exception as e:
+            logger.error(f"Error amending order: {str(e)}")
+            return None
+
+    def edit_order(self, txid: str, pair: str, volume: Optional[float] = None, price: Optional[float] = None, price2: Optional[float] = None):
+        """
+        Edit an existing order on Kraken.
+        :param txid: Transaction ID of the order to edit.
+        :param pair: Trading pair (e.g., XBTUSD).
+        :param volume: New order volume (optional).
+        :param price: New order price (optional).
+        :param price2: Secondary price (optional, e.g., for stop-loss orders).
+        """
+        nonce = str(int(time.time() * 1000))
+        endpoint = "/0/private/EditOrder"
+        data = {
+            "nonce": nonce,
+            "txid": txid,
+            "pair": pair,
+        }
+        if volume:
+            data["volume"] = str(volume)
+        if price:
+            data["price"] = str(price)
+        if price2:
+            data["price2"] = str(price2)
+
+        try:
+            signature = self.auth.generate_signature(endpoint, data)
+            headers = {
+                "API-Key": self.auth.api_key,
+                "API-Sign": signature,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            response = requests.post(API_URL + endpoint, headers=headers, data=json.dumps(data))
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("error"):
+                logger.error(f"Order editing failed: {result['error']}")
+                return None
+
+            logger.info(f"Order edited successfully: {result['result']}")
+            return result["result"]
+        except Exception as e:
+            logger.error(f"Error editing order: {str(e)}")
+            return None
+
+    def cancel_order(self, txid: str):
+        """
+        Cancel an existing order on Kraken.
+        :param txid: Transaction ID of the order to cancel.
+        """
+        nonce = str(int(time.time() * 1000))
+        endpoint = "/0/private/CancelOrder"
+        data = {
+            "nonce": nonce,
+            "txid": txid,
+        }
+
+        try:
+            signature = self.auth.generate_signature(endpoint, data)
+            headers = {
+                "API-Key": self.auth.api_key,
+                "API-Sign": signature,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            response = requests.post(API_URL + endpoint, headers=headers, data=json.dumps(data))
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("error"):
+                logger.error(f"Order cancellation failed: {result['error']}")
+                return None
+
+            logger.info(f"Order canceled successfully: {result['result']}")
+            return result["result"]
+        except Exception as e:
+            logger.error(f"Error canceling order: {str(e)}")
+            return None
+
+    def cancel_all_orders(self):
+        """
+        Cancel all open orders on Kraken.
+        """
+        nonce = str(int(time.time() * 1000))
+        endpoint = "/0/private/CancelAll"
+        data = {
+            "nonce": nonce,
+        }
+
+        try:
+            signature = self.auth.generate_signature(endpoint, data)
+            headers = {
+                "API-Key": self.auth.api_key,
+                "API-Sign": signature,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            response = requests.post(API_URL + endpoint, headers=headers, data=json.dumps(data))
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("error"):
+                logger.error(f"Cancel all orders failed: {result['error']}")
+                return None
+
+            logger.info(f"All orders canceled successfully: {result['result']}")
+            return result["result"]
+        except Exception as e:
+            logger.error(f"Error canceling all orders: {str(e)}")
+            return None
+
+    def cancel_order_batch(self, order_ids: List[str]):
+        """
+        Cancel a batch of orders on Kraken.
+        :param order_ids: List of transaction IDs of the orders to cancel.
+        """
+        nonce = str(int(time.time() * 1000))
+        endpoint = "/0/private/CancelOrderBatch"
+        data = {
+            "nonce": nonce,
+            "orders": order_ids,
+        }
+
+        try:
+            signature = self.auth.generate_signature(endpoint, data)
+            headers = {
+                "API-Key": self.auth.api_key,
+                "API-Sign": signature,
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            response = requests.post(API_URL + endpoint, headers=headers, data=json.dumps(data))
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("error"):
+                logger.error(f"Batch order cancellation failed: {result['error']}")
+                return None
+
+            logger.info(f"Batch orders canceled successfully: {result['result']}")
+            return result["result"]
+        except Exception as e:
+            logger.error(f"Error canceling batch orders: {str(e)}")
+            return None
+
     def run(self, interval: int = 15, risk_pct: float = 0.01):
         logger.info("Starting trading bot with adaptive strategy...")
 
@@ -580,7 +924,23 @@ class TradingBot:
 
                         analysis = self.strategy.analyze(pair)
                         if analysis['signal'] != 'hold' and analysis['confidence'] >= 0.5:
-                            self.adaptive_strategy.execute(pair, analysis['confidence'])
+                            # Calculate position size
+                            position_size = self.risk_manager.calculate_position_size(pair, risk_pct)
+                            if analysis['signal'] == 'buy':
+                                self.execute_order(pair, 'buy', position_size, price=analysis.get('price'))
+                                self.active_trades[pair] = (analysis['price'], datetime.now(), position_size)
+                            elif analysis['signal'] == 'sell':
+                                self.execute_order(pair, 'sell', position_size, price=analysis.get('price'))
+                                self.active_trades[pair] = (analysis['price'], datetime.now(), position_size)
+
+                        # Check for exit conditions
+                        if pair in self.active_trades:
+                            entry_price, entry_time, _ = self.active_trades[pair]
+                            should_exit, reason = self.exit_strategy.should_exit(pair, entry_price, entry_time)
+                            if should_exit:
+                                logger.info(f"Exiting trade for {pair} due to {reason}")
+                                self.execute_order(pair, 'sell' if analysis['signal'] == 'buy' else 'buy', position_size)
+                                del self.active_trades[pair]
 
                     except Exception as e:
                         logger.error(f"Error processing pair {pair}: {str(e)}")
@@ -621,5 +981,78 @@ def main():
     bot = TradingBot(api_key, api_secret, trading_pairs)
     bot.run()
 
+# Example usage of the batch order execution
 if __name__ == "__main__":
+    """
+    api_key = os.getenv('KRAKEN_API_KEY')
+    api_secret = os.getenv('KRAKEN_API_SECRET')
+
+    bot = TradingBot(api_key, api_secret, trading_pairs=["BTC/USD"])
+
+    # Define batch orders
+    batch_orders = [
+        {
+            "ordertype": "limit",
+            "price": "40000",
+            "type": "buy",
+            "volume": "1.2",
+            "cl_ord_id": "order-1",
+            "timeinforce": "GTC",
+            "close": {
+                "ordertype": "stop-loss-limit",
+                "price": "37000",
+                "price2": "36000"
+            }
+        },
+        {
+            "ordertype": "limit",
+            "price": "42000",
+            "type": "sell",
+            "volume": "1.2",
+            "cl_ord_id": "order-2",
+            "timeinforce": "GTC"
+        }
+    ]
+
+    # Execute batch orders
+    bot.execute_batch_order(batch_orders, validate=False, deadline="2025-04-30T14:15:22Z")
+
+    # Amend an order
+    amended_order = bot.amend_order(
+        cl_ord_id="6d1b345e-2821-40e2-ad83-4ecb18a06876",
+        order_qty=1.25,
+        price=41000
+    )
+    print(amended_order)
+
+    # Edit an order
+    edited_order = bot.edit_order(
+        txid="OHYO67-6LP66-HMQ437",
+        pair="XBTUSD",
+        volume=1.25,
+        price=27500,
+        price2=26500
+    )
+    print(edited_order)
+    """
     main()
+
+# Example usage of the edit order functionality
+if __name__ == "__main__":
+    # Uncomment the following block only for testing purposes
+    """
+    api_key = os.getenv('KRAKEN_API_KEY')
+    api_secret = os.getenv('KRAKEN_API_SECRET')
+
+    bot = TradingBot(api_key, api_secret, trading_pairs=["XBTUSD"])
+
+    # Edit an order
+    edited_order = bot.edit_order(
+        txid="OHYO67-6LP66-HMQ437",
+        pair="XBTUSD",
+        volume=1.25,
+        price=27500,
+        price2=26500
+    )
+    print(edited_order)
+    """
