@@ -36,8 +36,8 @@ If you'd rather skip the setup and get started right away, a **pre-configured ed
 
 1. **Clone this repo**  
    ```bash
-   git clone https://github.com/yourusername/krakenbot-lite.git
-   cd krakenbot-lite
+   git clone https://github.com/KrakeTrade/KrakeTrade-Lite.git
+   cd KrakeTrade-Lite
    ```
 
 2. **Create a `.env` file**  
@@ -52,7 +52,7 @@ If you'd rather skip the setup and get started right away, a **pre-configured ed
 
 4. **Run the bot**  
    ```bash
-   python kraken-bot-lite.py
+   python krakebot.py
    ```
 
 ---
@@ -74,14 +74,14 @@ I offer a **pre-configured version** for users who want to skip manual setup and
 This is for users who want to get started fast with proven default settings.
 
 **To purchase:**  
-- Email: krakenbotlive@proton.me  
+- Email: kraketrade@proton.me  
 - Or [Ko-fi / BuyMeACoffee / Gumroad link]
 
 ---
 
 ## License
 
-Kraken Bot Lite is open-source under the MIT License, for personal and educational use.  
+KrakeTrade Lite is open-source under the MIT License, for personal and educational use.  
 **Commercial use or resale prohibited without permission.**
 
 ---
