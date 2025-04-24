@@ -1,4 +1,4 @@
-# Kraken Bot Lite
+# KrakeTrade Lite
 
 **Multi-Strategy Kraken Trading Bot – Free for Devs, Pre-Configured for $50**
 
