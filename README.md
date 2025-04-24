@@ -2,7 +2,7 @@
 
 **Multi-Strategy Kraken Trading Bot – Free for Devs, Pre-Configured for $50**
 
-Kraken Bot Lite is a modular, Python-based trading bot for the Kraken exchange. It features multiple configurable strategies, adaptive market state detection, and risk-managed trade logic.
+KrakeTrade Lite is a modular, Python-based trading bot for the Kraken exchange. It features multiple configurable strategies, adaptive market state detection, and risk-managed trade logic.
 
 This version is **fully open-source**, but requires user configuration before it can be run effectively. If you're a developer, it’s free to explore, extend, and use.
 
