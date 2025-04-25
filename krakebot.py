@@ -1,4 +1,4 @@
-# Import required libraries
+# Standard library imports
 import os
 import time
 import base64
@@ -6,14 +6,88 @@ import hashlib
 import hmac
 import json
 import logging
-import urllib.request
-from urllib.parse import urlencode
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlencode
+import platform
+import threading
+from collections import defaultdict
+
+# Third-party library imports
 import pandas as pd
 import numpy as np
-from datetime import datetime
 import requests
 from dotenv import load_dotenv
+from colorama import Fore, init
+
+# Initialize Colorama (for cross-platform colors)
+init()
+
+# ======================
+# 1. PURPLE & BLACK ASCII BANNER
+# ======================
+BANNER = f"""
+{Fore.MAGENTA}
+ ██╗  ██╗██████╗  █████╗ ██╗  ██╗███████╗██████╗  ██████╗ ████████╗
+ ██║ ██╔╝██╔══██╗██╔══██╗██║ ██╔╝██╔════╝██╔══██╗██╔═══██╗╚══██╔══╝
+ █████╔╝ ██████╔╝███████║█████╔╝ █████╗  ██████╔╝██║   ██║   ██║   
+ ██╔═██╗ ██╔══██╗██╔══██║██╔═██╗ ██╔══╝  ██╔══██╗██║   ██║   ██║   
+ ██║  ██╗██║  ██║██║  ██║██║  ██╗███████╗██████╔╝╚██████╔╝   ██║   
+ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚═════╝  ╚═════╝    ╚═╝   
+{Fore.RESET}
+"""
+
+# ======================
+# 2. FETCH PRICES ONCE
+# ======================
+def get_crypto_price(pair: str) -> float:
+    """Get current price from Kraken API (one-time fetch)."""
+    try:
+        response = requests.get(f"https://api.kraken.com/0/public/Ticker?pair={pair}")
+        data = response.json()
+        return float(data["result"][list(data["result"].keys())[0]]["c"][0])
+    except:
+        return 0.0  # Fallback if API fails
+
+# ======================
+# 3. PRINT STARTUP SCREEN
+# ======================
+def print_startup():
+    """Display banner and prices."""
+    print(BANNER)
+    print(f"{Fore.MAGENTA}┌──────────────────────────┬──────────────────────────┐")
+    print(f"│ ⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} │ 🐍 Python {platform.python_version()} │")
+    print(f"├──────────────────────────┼──────────────────────────┤")
+    
+    # Get prices
+    btc_price = get_crypto_price("XXBTZUSD")
+    eth_price = get_crypto_price("XETHZUSD")
+    
+    print(f"│ {Fore.MAGENTA}BTC/USD{Fore.MAGENTA}: {Fore.WHITE}${btc_price:,.2f}{Fore.MAGENTA}  │ {Fore.MAGENTA}ETH/USD{Fore.MAGENTA}: {Fore.WHITE}${eth_price:,.2f}{Fore.MAGENTA}  │")
+    print(f"└──────────────────────────┴──────────────────────────┘{Fore.RESET}")
+
+# ======================
+# 4. WAIT FOR USER INPUT
+# ======================
+def wait_for_start():
+    """Wait for the user to type 'start' or exit."""
+    while True:
+        user_input = input("Type 'start' to begin or 'exit' to quit: ").strip().lower()
+        if user_input == "start":
+            print("Starting the bot...")
+            return True
+        elif user_input == "exit":
+            print("Exiting the program. Goodbye!")
+            return False
+        else:
+            print("Invalid input. Please type 'start' to begin or 'exit' to quit.")
+
+# ======================
+# 5. MAIN ENTRY POINT
+# ======================
+if __name__ == "__main__":
+    print_startup()
+    
 
 # Constants
 API_URL = "https://api.kraken.com"
@@ -48,12 +122,56 @@ class KrakenAuth:
         mac = hmac.new(base64.b64decode(self.api_secret), message, hashlib.sha512)
         return base64.b64encode(mac.digest()).decode()
 
+import time
+import threading
+from collections import defaultdict
+
+# Rate limit configurations
+RATE_LIMITS = {
+    "public": {"limit": 1, "interval": 1},  # 1 request per second
+    "private": {"limit": 15, "interval": 1},  # Example: 15 requests per second
+    "trading": {"limit": 10, "interval": 1},  # Example: 10 requests per second
+}
+
+class RateLimiter:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.request_counters = defaultdict(lambda: {"count": 0, "last_reset": time.time()})
+
+    def can_make_request(self, category: str) -> bool:
+        """Check if a request can be made for the given category."""
+        with self.lock:
+            now = time.time()
+            counter = self.request_counters[category]
+            elapsed = now - counter["last_reset"]
+
+            # Reset the counter if the interval has passed
+            if elapsed > RATE_LIMITS[category]["interval"]:
+                counter["count"] = 0
+                counter["last_reset"] = now
+
+            # Check if the request can be made
+            if counter["count"] < RATE_LIMITS[category]["limit"]:
+                counter["count"] += 1
+                return True
+            return False
+
+    def wait_for_slot(self, category: str):
+        """Wait until a request slot is available for the given category."""
+        while not self.can_make_request(category):
+            time.sleep(0.1)  # Sleep for a short time before checking again
+
+# Initialize the rate limiter
+rate_limiter = RateLimiter()
+
+# Example usage in API calls
 class MarketData:
     def __init__(self, auth: KrakenAuth):
         self.auth = auth
 
     def get_ohlc(self, pair: str, interval: int = 1440) -> pd.DataFrame:
         logger.info(f"Fetching OHLC data for pair: {pair}, interval: {interval}")
+        rate_limiter.wait_for_slot("public")  # Enforce public API rate limit
         try:
             response = requests.get(f"{API_URL}/0/public/OHLC", params={"pair": pair, "interval": interval})
             response.raise_for_status()
@@ -90,6 +208,35 @@ class MarketData:
         ...
         logger.debug(f"API response: {response}")
 
+    def get_account_balance(self) -> Dict[str, float]:
+        """
+        Fetch the account balance from Kraken.
+        Returns a dictionary with asset balances.
+        """
+        rate_limiter.wait_for_slot("private")  # Enforce private API rate limit
+        nonce = str(int(time.time() * 1000))
+        endpoint = "/0/private/Balance"
+        data = {"nonce": nonce}
+
+        try:
+            signature = self.auth.generate_signature(endpoint, data)
+            headers = {
+                "API-Key": self.auth.api_key,
+                "API-Sign": signature,
+            }
+            response = requests.post(API_URL + endpoint, headers=headers, data=data)
+            response.raise_for_status()
+            result = response.json()
+
+            if result.get("error"):
+                logger.error(f"Failed to fetch account balance: {result['error']}")
+                return {}
+
+            return {asset: float(balance) for asset, balance in result["result"].items()}
+        except Exception as e:
+            logger.error(f"Error fetching account balance: {str(e)}")
+            return {}
+
 class TradingStrategy:
     def __init__(self, market_data: MarketData):
         self.market_data = market_data
@@ -98,15 +245,19 @@ class TradingStrategy:
         raise NotImplementedError
 
 class EMACrossoverStrategy(TradingStrategy):
-    def __init__(self, market_data: MarketData, fast_period: int = None, slow_period: int = None, higher_fast_period: int = None, higher_slow_period: int = None):
+    def __init__(self, market_data: MarketData):
         super().__init__(market_data)
-        self.fast_period = fast_period or "<configure>"
-        self.slow_period = slow_period or "<configure>"
-        self.higher_fast_period = higher_fast_period or "<configure>"
-        self.higher_slow_period = higher_slow_period or "<configure>"
+        self.fast_period = <configure>
+        self.slow_period = <configure>
+        self.higher_fast_period = <configure>  # 4-hour fast EMA
+        self.higher_slow_period = <configure>  # 4-hour slow EMA
 
     def calculate_higher_ema_crossover(self, pair: str) -> bool:
-        ohlc = self.market_data.get_ohlc(pair, interval=240)  # 4-hour timeframe
+        """
+        Calculate 20×50 EMA crossover for the 4-hour timeframe.
+        Returns True if there's a crossover, False otherwise.
+        """
+        ohlc = self.market_data.get_ohlc(pair, interval=240)  # 240 minutes = 4 hours
         if len(ohlc) < max(self.higher_fast_period, self.higher_slow_period):
             logger.warning(f"Not enough data for 4-hour EMA analysis for pair: {pair}")
             return False
@@ -117,10 +268,11 @@ class EMACrossoverStrategy(TradingStrategy):
         last_row = ohlc.iloc[-1]
         prev_row = ohlc.iloc[-2]
 
+        # Check for 20×50 crossover conditions
         if prev_row['fast_ema'] <= prev_row['slow_ema'] and last_row['fast_ema'] > last_row['slow_ema']:
-            return True
+            return True  # Bullish crossover
         elif prev_row['fast_ema'] >= prev_row['slow_ema'] and last_row['fast_ema'] < last_row['slow_ema']:
-            return True
+            return True  # Bearish crossover
 
         return False
 
@@ -136,105 +288,24 @@ class EMACrossoverStrategy(TradingStrategy):
         last_row = ohlc.iloc[-1]
         prev_row = ohlc.iloc[-2]
 
-        if prev_row['fast_ema'] <= prev_row['slow_ema'] and last_row['fast_ema'] > last_row['slow_ema']:
+        # Check 9×21 crossover (main strategy condition)
+        if (prev_row['fast_ema'] <= prev_row['slow_ema'] and last_row['fast_ema'] > last_row['slow_ema']):
+            # Confirm with 20×50 EMA on 4-hour timeframe
             if self.calculate_higher_ema_crossover(pair):
                 return {'signal': 'buy', 'price': float(last_row['close']), 'confidence': 0.8}
-        elif prev_row['fast_ema'] >= prev_row['slow_ema'] and last_row['fast_ema'] < last_row['slow_ema']:
+        elif (prev_row['fast_ema'] >= prev_row['slow_ema'] and last_row['fast_ema'] < last_row['slow_ema']):
+            # Confirm with 20×50 EMA on 4-hour timeframe
             if self.calculate_higher_ema_crossover(pair):
                 return {'signal': 'sell', 'price': float(last_row['close']), 'confidence': 0.8}
 
         return {'signal': 'hold', 'confidence': 0}
 
 class MACDStrategy(TradingStrategy):
-    def __init__(self, market_data: MarketData, fast_period: int = None, slow_period: int = None, signal_period: int = None):
-        super().__init__(market_data)
-        self.fast_period = fast_period or "<configure>"
-        self.slow_period = slow_period or "<configure>"
-        self.signal_period = signal_period or "<configure>"
-
-    def analyze(self, pair: str) -> dict:
-        ohlc = self.market_data.get_ohlc(pair)
-        fast_ema = ohlc['close'].ewm(span=self.fast_period, adjust=False).mean()
-        slow_ema = ohlc['close'].ewm(span=self.slow_period, adjust=False).mean()
-        macd_line = fast_ema - slow_ema
-        signal_line = macd_line.ewm(span=self.signal_period, adjust=False).mean()
-
-        last_macd = macd_line.iloc[-1]
-        last_signal = signal_line.iloc[-1]
-        prev_macd = macd_line.iloc[-2]
-        prev_signal = signal_line.iloc[-2]
-
-        if prev_macd <= prev_signal and last_macd > last_signal:
-            return {'signal': 'buy', 'price': float(ohlc['close'].iloc[-1]), 'confidence': 0.7}
-        elif prev_macd >= prev_signal and last_macd < last_signal:
-            return {'signal': 'sell', 'price': float(ohlc['close'].iloc[-1]), 'confidence': 0.7}
-        return {'signal': 'hold', 'confidence': 0}
-
-class RSIStrategy(TradingStrategy):
-    def __init__(self, market_data: MarketData, period: int = None, overbought: int = None, oversold: int = None):
-        super().__init__(market_data)
-        self.period = period or "<configure>"
-        self.overbought = overbought or "<configure>"
-        self.oversold = oversold or "<configure>"
-
-    def analyze(self, pair: str) -> dict:
-        ohlc = self.market_data.get_ohlc(pair)
-        delta = ohlc['close'].diff()
-        gain = delta.where(delta > 0, 0).rolling(window=self.period).mean()
-        loss = -delta.where(delta < 0, 0).rolling(window=self.period).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-
-        last_rsi = rsi.iloc[-1]
-        prev_rsi = rsi.iloc[-2]
-
-        if prev_rsi <= self.oversold and last_rsi > self.oversold:
-            return {'signal': 'buy', 'price': float(ohlc['close'].iloc[-1]), 'confidence': 0.6}
-        elif prev_rsi >= self.overbought and last_rsi < self.overbought:
-            return {'signal': 'sell', 'price': float(ohlc['close'].iloc[-1]), 'confidence': 0.6}
-        return {'signal': 'hold', 'confidence': 0}
-
-class FibonacciStrategy(TradingStrategy):
-    def __init__(self, market_data: MarketData, levels: List[float] = None, lookback: int = None):
-        super().__init__(market_data)
-        self.levels = levels or "<configure>"
-        self.lookback = lookback or "<configure>"
-
-    def analyze(self, pair: str) -> dict:
-        ohlc = self.market_data.get_ohlc(pair, interval=60)
-        highs = ohlc['high'].rolling(window=5, center=True).max()
-        lows = ohlc['low'].rolling(window=5, center=True).min()
-        swing_high = highs.max()
-        swing_low = lows.min()
-        current_price = float(ohlc['close'].iloc[-1])
-
-        fib_levels = {level: swing_high - (level * (swing_high - swing_low)) for level in self.levels}
-
-        nearest_level = None
-        min_dist = float('inf')
-        for level, price in fib_levels.items():
-            dist = abs(current_price - price)
-            if dist < min_dist:
-                min_dist = dist
-                nearest_level = level
-
-        if current_price >= swing_high * 0.99:
-            return {'signal': 'sell', 'price': current_price, 'confidence': 0.6}
-        elif current_price <= swing_low * 1.01:
-            return {'signal': 'buy', 'price': current_price, 'confidence': 0.6}
-        elif nearest_level and min_dist < 0.008 * current_price:
-            if nearest_level >= 0.618 and ohlc['close'].iloc[-1] > ohlc['close'].iloc[-2]:
-                return {'signal': 'buy', 'price': current_price, 'confidence': 0.6}
-            elif nearest_level <= 0.382 and ohlc['close'].iloc[-1] < ohlc['close'].iloc[-2]:
-                return {'signal': 'sell', 'price': current_price, 'confidence': 0.6}
-        return {'signal': 'hold', 'confidence': 0}
-
-class MACDStrategy(TradingStrategy):
     def __init__(self, market_data: MarketData):
         super().__init__(market_data)
-        self.fast_period = 12
-        self.slow_period = 26
-        self.signal_period = 9
+        self.fast_period = <configure>
+        self.slow_period = <configure>
+        self.signal_period = <configure>
 
     def analyze(self, pair: str) -> dict:
         ohlc = self.market_data.get_ohlc(pair)
@@ -257,9 +328,9 @@ class MACDStrategy(TradingStrategy):
 class RSIStrategy(TradingStrategy):
     def __init__(self, market_data: MarketData):
         super().__init__(market_data)
-        self.period = 14
-        self.overbought = 65
-        self.oversold = 35
+        self.period = <configure>
+        self.overbought = <configure>
+        self.oversold = <configure>
 
     def analyze(self, pair: str) -> dict:
         ohlc = self.market_data.get_ohlc(pair)
@@ -281,8 +352,8 @@ class RSIStrategy(TradingStrategy):
 class FibonacciStrategy(TradingStrategy):
     def __init__(self, market_data: MarketData):
         super().__init__(market_data)
-        self.levels = [0.236, 0.382, 0.5, 0.618, 0.786]
-        self.lookback = 100
+        self.levels = <configure>
+        self.lookback = <configure>
 
     def analyze(self, pair: str) -> dict:
         ohlc = self.market_data.get_ohlc(pair, interval=60)
@@ -316,10 +387,10 @@ class FibonacciStrategy(TradingStrategy):
 class DailyVWAPStrategy(TradingStrategy):
     def __init__(self, market_data: MarketData):
         super().__init__(market_data)
-        self.std_dev_multiplier = 2.0
-        self.confirmation_periods = 3
-        self.min_volume_factor = 1.5
-        self.lower_timeframe_interval = 240  # 4-hour confirmation timeframe
+        self.std_dev_multiplier = <configure>
+        self.confirmation_periods = <configure>
+        self.min_volume_factor = <configure>
+        self.lower_timeframe_interval = <configure>  # 4-hour confirmation timeframe
 
     def calculate_vwap(self, ohlc_data):
         """Calculate VWAP and standard deviation bands"""
@@ -416,12 +487,12 @@ class CompositeStrategy(TradingStrategy):
     def __init__(self, market_data: MarketData):
         super().__init__(market_data)
         self.strategies = {
-            'vwap': DailyVWAPStrategy(market_data), # Daily VWAP strategy
-            'macd': MACDStrategy(market_data),    # MACD strategy
-            'rsi': RSIStrategy(market_data),    # RSI strategy
-            'fib': FibonacciStrategy(market_data) ,  # Fibonacci strategy
+            'vwap': DailyVWAPStrategy(market_data),  # Daily VWAP strategy
+            'macd': MACDStrategy(market_data),      # MACD strategy
+            'rsi': RSIStrategy(market_data),        # RSI strategy
+            'fib': FibonacciStrategy(market_data),  # Fibonacci strategy
         }
-        self.required_confirmations = 2
+        self.required_confirmations = <configure>
 
     def analyze(self, pair: str) -> dict:
         logger.info(f"Analyzing trading signals for pair: {pair}")
@@ -439,15 +510,20 @@ class CompositeStrategy(TradingStrategy):
 
         if buy_signals >= self.required_confirmations:
             logger.info(f"Composite signal: buy with {buy_signals} confirmations")
-            return {'signal': 'buy', 'price': results['ema']['price'], 'confidence': buy_signals / 5}
+            # Use the first 'buy' strategy's price for the composite signal
+            buy_price = next((results[name]['price'] for name in results if results[name]['signal'] == 'buy'), None)
+            return {'signal': 'buy', 'price': buy_price, 'confidence': buy_signals / len(self.strategies)}
         elif sell_signals >= self.required_confirmations:
             logger.info(f"Composite signal: sell with {sell_signals} confirmations")
-            return {'signal': 'sell', 'price': results['ema']['price'], 'confidence': sell_signals / 5}
+            # Use the first 'sell' strategy's price for the composite signal
+            sell_price = next((results[name]['price'] for name in results if results[name]['signal'] == 'sell'), None)
+            return {'signal': 'sell', 'price': sell_price, 'confidence': sell_signals / len(self.strategies)}
+        
         logger.info("Composite signal: hold")
         return {'signal': 'hold', 'confidence': 0}
 
 class AdaptiveStrategy:
-    def __init__(self, market_data: MarketData, base_risk=1.0):
+    def __init__(self, market_data: MarketData, base_risk=<configure>):
         self.market_data = market_data
         self.market_state = None  # "trending", "ranging", "volatile"
         self.base_risk = base_risk
@@ -573,18 +649,34 @@ class RiskManager:
         current_price = float(self.market_data.get_ohlc(pair)['close'].iloc[-1])
         return (risk_pct * current_price) / (atr * 2)
 
+    def calculate_max_position_size(self, pair: str, risk_pct: float = 0.01) -> float:
+        """
+        Calculate the maximum position size based on the account balance and 1% risk limit.
+        """
+        balance = self.market_data.get_account_balance()
+        base_currency = pair.split("/")[0]  # Extract base currency (e.g., BTC in BTC/USD)
+
+        if base_currency not in balance:
+            logger.warning(f"No balance available for {base_currency}")
+            return 0.0
+
+        account_balance = balance[base_currency]
+        atr = self.market_data.calculate_atr(pair)
+        max_risk_amount = account_balance * risk_pct
+        return max_risk_amount / (atr * 2)  # ATR-based position sizing
+
 class SmartExitStrategy:
     """Advanced exit strategy combining multiple confirmation signals"""
 
     def __init__(self, market_data: MarketData):
         self.market_data = market_data
-        self.trailing_stop_activation_pct = 0.5  # Activate trailing stop after 0.5% profit
-        self.trailing_stop_distance_pct = 0.3    # 0.3% trailing distance
-        self.profit_targets = [0.5, 1.0, 2.0]    # Take profit at 0.5%, 1%, and 2%
+        self.trailing_stop_activation_pct = <configure>  # Activate trailing stop after X% profit
+        self.trailing_stop_distance_pct = <configure>    # X% trailing distance
+        self.profit_targets = <configure>                # Take profit at configured levels
         self.emergency_exit_signals = {
-            'rsi_limit': 75,      # Exit if RSI reaches this level
-            'volume_spike': 2.5,  # 2.5x average volume
-            'time_decay': 6       # Max 6 hours per trade
+            'rsi_limit': <configure>,      # Exit if RSI reaches this level
+            'volume_spike': <configure>,  # X times average volume
+            'time_decay': <configure>     # Max X hours per trade
         }
 
     def should_exit(self, pair: str, entry_price: float, entry_time: datetime) -> Tuple[bool, Optional[str]]:
@@ -646,15 +738,27 @@ class TradingBot:
         self.exit_strategy = SmartExitStrategy(self.market_data)
         self.active_trades = {}  # {pair: (entry_price, entry_time, position_size)}
         self.trading_pairs = trading_pairs  # List of trading pairs to monitor and trade
+        self.stop_event = threading.Event()  # Event to signal when to stop
+
+    def listen_for_stop(self):
+        """Listen for the 'stop' command from the user."""
+        while not self.stop_event.is_set():
+            user_input = input("Type 'stop' to stop the bot and return to the startup screen: ").strip().lower()
+            if user_input == "stop":
+                self.stop_event.set()
+                print("Stopping the bot...")
 
     def execute_order(self, pair: str, order_type: str, volume: float, price: Optional[float] = None):
         """
-        Execute an order on Kraken.
-        :param pair: Trading pair (e.g., BTC/USD)
-        :param order_type: 'buy' or 'sell'
-        :param volume: Order volume
-        :param price: Optional limit price (for limit orders)
+        Execute an order on Kraken with balance checks and risk limit enforcement.
         """
+        rate_limiter.wait_for_slot("trading")  # Enforce trading API rate limit
+        # Fetch account balance and calculate max allowable position size
+        max_position_size = self.risk_manager.calculate_max_position_size(pair)
+        if volume > max_position_size:
+            logger.warning(f"Order volume {volume} exceeds max allowable position size {max_position_size}")
+            return None
+
         nonce = str(int(time.time() * 1000))
         endpoint = "/0/private/AddOrder"
         data = {
@@ -683,9 +787,11 @@ class TradingBot:
 
             logger.info(f"Order executed successfully: {result['result']}")
             return result["result"]
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Network error during order execution: {str(e)}")
         except Exception as e:
-            logger.error(f"Error executing order: {str(e)}")
-            return None
+            logger.error(f"Unexpected error during order execution: {str(e)}")
+        return None
 
     def execute_batch_order(self, orders: List[dict], validate: bool = False, deadline: Optional[str] = None):
         """
@@ -914,8 +1020,12 @@ class TradingBot:
     def run(self, interval: int = 15, risk_pct: float = 0.01):
         logger.info("Starting trading bot with adaptive strategy...")
 
+        # Start the stop listener in a separate thread
+        stop_thread = threading.Thread(target=self.listen_for_stop, daemon=True)
+        stop_thread.start()
+
         try:
-            while True:
+            while not self.stop_event.is_set():
                 for pair in self.trading_pairs:
                     try:
                         self.adaptive_strategy.detect_market_state(pair)
@@ -926,6 +1036,10 @@ class TradingBot:
                         if analysis['signal'] != 'hold' and analysis['confidence'] >= 0.5:
                             # Calculate position size
                             position_size = self.risk_manager.calculate_position_size(pair, risk_pct)
+                            if position_size == 0:
+                                logger.warning(f"Skipping trade for {pair} due to insufficient balance or risk limit")
+                                continue
+
                             if analysis['signal'] == 'buy':
                                 self.execute_order(pair, 'buy', position_size, price=analysis.get('price'))
                                 self.active_trades[pair] = (analysis['price'], datetime.now(), position_size)
@@ -947,10 +1061,15 @@ class TradingBot:
                         continue  # Skip to the next pair
 
                 time.sleep(interval * 60)
+
         except KeyboardInterrupt:
             logger.info("Shutting down...")
         except Exception as e:
             logger.error(f"Critical error: {str(e)}")
+        finally:
+            self.stop_event.set()  # Ensure the stop event is set
+            stop_thread.join()  # Wait for the stop thread to finish
+            print_startup()  # Return to the startup banner
 
 def get_valid_pairs():
     response = requests.get(f"{API_URL}/0/public/AssetPairs")
@@ -969,17 +1088,30 @@ from dotenv import load_dotenv
 load_dotenv()
 
 def main():
-    api_key = os.getenv('KRAKEN_API_KEY')
-    api_secret = os.getenv('KRAKEN_API_SECRET')
+    while True:
+        print_startup()  # Display the startup banner
+        if not wait_for_start():  # Exit if the user chooses not to start
+            break
 
-    if not api_key or not api_secret:
-        raise ValueError("API keys not set in environment variables")
+        # Load API keys from environment variables
+        api_key = os.getenv('KRAKEN_API_KEY')
+        api_secret = os.getenv('KRAKEN_API_SECRET')
 
-    # Use the dynamically fetched pairs
-    trading_pairs = get_valid_pairs()
+        if not api_key or not api_secret:
+            raise ValueError("API keys not set in environment variables")
 
-    bot = TradingBot(api_key, api_secret, trading_pairs)
-    bot.run()
+        # Fetch valid trading pairs dynamically
+        trading_pairs = get_valid_pairs()
+
+        # Initialize and run the bot
+        bot = TradingBot(api_key, api_secret, trading_pairs)
+        bot.run()
+
+        # After the bot stops, ask the user if they want to restart
+        user_input = input("Do you want to restart the bot? (yes/no): ").strip().lower()
+        if user_input != "yes":
+            print("Exiting the program. Goodbye!")
+            break
 
 # Example usage of the batch order execution
 if __name__ == "__main__":
